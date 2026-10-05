@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Cute AR Cats on Shoulders</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #000;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+    #wrap {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #000;
+    }
+    video, canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    video {
+      transform: scaleX(-1);
+      -webkit-transform: scaleX(-1);
+    }
+    canvas { pointer-events: none; }
+
+    #status {
+      position: fixed;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 30;
+      min-width: 285px;
+      padding: 10px 16px;
+      color: white;
+      text-align: center;
+      font-size: 14px;
+      border-radius: 18px;
+      background: rgba(0,0,0,.55);
+      backdrop-filter: blur(7px);
+    }
+
+    #panel {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 30;
+      width: calc(100% - 22px);
+      max-width: 650px;
+      padding: 12px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.90);
+      box-shadow: 0 8px 30px rgba(0,0,0,.25);
+    }
+
+    .title {
+      text-align: center;
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 9px;
+      color: #333;
+    }
+
+    .choices {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .catChoice {
+      border: 2px solid transparent;
+      border-radius: 14px;
+      padding: 10px 5px;
+      background: #f5f5f5;
+      font-weight: bold;
+      cursor: pointer;
+      transition: .18s;
+      color: #333;
+    }
+
+    .catChoice .icon {
+      display: block;
+      font-size: 26px;
+      margin-bottom: 3px;
+    }
+
+    .catChoice.active {
+      background: #fff0e5;
+      border-color: #ff8a3d;
+      transform: translateY(-2px);
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 9px;
+      flex-wrap: wrap;
+    }
+
+    .controls button {
+      border: none;
+      border-radius: 12px;
+      padding: 9px 13px;
+      font-size: 13px;
+      font-weight: bold;
+      color: white;
+      background: #246bfd;
+      cursor: pointer;
+    }
+
+    .controls button:nth-child(2) {
+      background: #ff7c35;
+    }
+
+    @media(max-width: 520px) {
+      .catChoice { font-size: 11px; padding: 8px 3px; }
+      .catChoice .icon { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="wrap">
+  <video id="video" playsinline autoplay muted></video>
+  <canvas id="canvas"></canvas>
+</div>
+
+<div id="status">กำลังเปิดกล้อง...</div>
+
+<div id="panel">
+  <div class="title">เลือกแมวการ์ตูนน่ารัก 3 แบบ</div>
+
+  <div class="choices">
+    <button id="orangeBtn" class="catChoice active" onclick="selectCat('orange')">
+      <span class="icon">🧡</span>
+      แมวส้ม
+    </button>
+
+    <button id="whiteBtn" class="catChoice" onclick="selectCat('white')">
+      <span class="icon">🤍</span>
+      แมวขาว
+    </button>
+
+    <button id="blackBtn" class="catChoice" onclick="selectCat('black')">
+      <span class="icon">🖤</span>
+      แมวดำ
+    </button>
+  </div>
+
+  <div class="controls">
+    <button onclick="toggleRun()">⏯ วิ่ง / หยุด</button>
+    <button onclick="changeSpeed()">⚡ ความเร็ว: <span id="speedLabel">ปกติ</span></button>
+  </div>
+</div>
+
+<script type="module">
+import {
+  PoseLandmarker,
+  FilesetResolver
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const statusBox = document.getElementById("status");
+const speedLabel = document.getElementById("speedLabel");
+
+let poseLandmarker;
+let running = true;
+let catType = "orange";
+let speedMode = 1;
+let globalSpeed = 1;
+
+const runners = [
+  { phase: 0.02, speed: 0.20, bounce: 0.0 },
+  { phase: 0.36, speed: 0.235, bounce: 1.8 },
+  { phase: 0.70, speed: 0.215, bounce: 3.4 }
+];
+
+window.selectCat = function(type) {
+  catType = type;
+
+  document.querySelectorAll(".catChoice")
+    .forEach(btn => btn.classList.remove("active"));
+
+  document.getElementById(type + "Btn").classList.add("active");
+};
+
+window.toggleRun = function() {
+  running = !running;
+};
+
+window.changeSpeed = function() {
+  speedMode++;
+  if (speedMode > 3) speedMode = 1;
+
+  if (speedMode === 1) {
+    globalSpeed = 1;
+    speedLabel.textContent = "ปกติ";
+  } else if (speedMode === 2) {
+    globalSpeed = 1.45;
+    speedLabel.textContent = "เร็ว";
+  } else {
+    globalSpeed = 0.65;
+    speedLabel.textContent = "ช้า";
+  }
+};
+
+function resizeCanvas() {
+  canvas.width = video.videoWidth || window.innerWidth;
+  canvas.height = video.videoHeight || window.innerHeight;
+}
+
+async function setupCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: "user",
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
+  });
+
+  video.srcObject = stream;
+
+  return new Promise(resolve => {
+    video.onloadedmetadata = () => {
+      video.play();
+      resizeCanvas();
+      resolve();
+    };
+  });
+}
+
+async function setupPose() {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+
+  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+    },
+    runningMode: "VIDEO",
+    numPoses: 1
+  });
+}
+
+function mirrorX(x) {
+  return canvas.width - x;
+}
+
+function catColors() {
+  if (catType === "white") {
+    return {
+      body: "#fffdf7",
+      patch: "#d8cfc3",
+      inner: "#f4b7b7",
+      line: "#5b5148",
+      eye: "#433b35"
+    };
+  }
+
+  if (catType === "black") {
+    return {
+      body: "#2b2b31",
+      patch: "#4b4b56",
+      inner: "#f1a4b8",
+      line: "#101014",
+      eye: "#ffd45c"
+    };
+  }
+
+  return {
+    body: "#f39a3e",
+    patch: "#ffc46b",
+    inner: "#f5a1a8",
+    line: "#7b4a25",
+    eye: "#3a2b22"
+  };
+}
+
+/* การ์ตูนแมววาดด้วย Canvas ไม่ใช่ Emoji */
+function drawCuteCat(x, y, scale, angle, time, runnerIndex) {
+  const c = catColors();
+
+  const cycle = time * 0.018 + runnerIndex * 1.7;
+  const legSwing = Math.sin(cycle) * 7;
+  const bounce = Math.abs(Math.sin(cycle)) * -5;
+  const tailWave = Math.sin(cycle * 0.65) * 0.25;
+
+  ctx.save();
+  ctx.translate(x, y + bounce);
+  ctx.rotate(angle);
+  ctx.scale(scale, scale);
+
+  // เงา
+  ctx.beginPath();
+  ctx.ellipse(0, 19, 27, 6, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(0,0,0,.16)";
+  ctx.fill();
+
+  // หาง
+  ctx.save();
+  ctx.translate(18, -1);
+  ctx.rotate(tailWave);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(23, -11, 29, -26);
+  ctx.strokeStyle = c.body;
+  ctx.lineWidth = 9;
+  ctx.lineCap = "round";
+  ctx.stroke();
+
+  ctx.strokeStyle = c.line;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  // ลำตัว
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 24, 15, -0.08, 0, Math.PI * 2);
+  ctx.fillStyle = c.body;
+  ctx.fill();
+  ctx.strokeStyle = c.line;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // ปื้นท้อง
+  ctx.beginPath();
+  ctx.ellipse(-1, 4, 13, 8, 0, 0, Math.PI * 2);
+  ctx.fillStyle = c.patch;
+  ctx.fill();
+
+  // ขา 4 ขา วิ่งสลับกัน
+  function leg(px, py, swing) {
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px + swing, py + 15);
+    ctx.strokeStyle = c.body;
+    ctx.lineWidth = 7;
+    ctx.lineCap = "round";
+    ctx.stroke();
+
+    ctx.strokeStyle = c.line;
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+  }
+
+  leg(-14, 9, -legSwing);
+  leg(-4, 10, legSwing);
+  leg(10, 8, legSwing);
+  leg(17, 6, -legSwing);
+
+  // หัว
+  ctx.beginPath();
+  ctx.arc(-19, -8, 14, 0, Math.PI * 2);
+  ctx.fillStyle = c.body;
+  ctx.fill();
+  ctx.strokeStyle = c.line;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // หู
+  function ear(px) {
+    ctx.beginPath();
+    ctx.moveTo(px - 5, -17);
+    ctx.lineTo(px, -30);
+    ctx.lineTo(px + 7, -17);
+    ctx.closePath();
+    ctx.fillStyle = c.body;
+    ctx.fill();
+    ctx.strokeStyle = c.line;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(px - 2, -19);
+    ctx.lineTo(px, -25);
+    ctx.lineTo(px + 3, -19);
+    ctx.closePath();
+    ctx.fillStyle = c.inner;
+    ctx.fill();
+  }
+
+  ear(-27);
+  ear(-13);
+
+  // ตา
+  ctx.beginPath();
+  ctx.arc(-24, -9, 2.2, 0, Math.PI * 2);
+  ctx.arc(-15, -9, 2.2, 0, Math.PI * 2);
+  ctx.fillStyle = c.eye;
+  ctx.fill();
+
+  // จมูก
+  ctx.beginPath();
+  ctx.moveTo(-20, -4);
+  ctx.lineTo(-17, -4);
+  ctx.lineTo(-18.5, -1);
+  ctx.closePath();
+  ctx.fillStyle = "#e88b95";
+  ctx.fill();
+
+  // ปาก
+  ctx.beginPath();
+  ctx.moveTo(-18.5, -1);
+  ctx.quadraticCurveTo(-21, 2, -23, 0);
+  ctx.moveTo(-18.5, -1);
+  ctx.quadraticCurveTo(-16, 2, -14, 0);
+  ctx.strokeStyle = c.line;
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // หนวด
+  ctx.beginPath();
+  ctx.moveTo(-29, -2); ctx.lineTo(-39, -5);
+  ctx.moveTo(-29, 1); ctx.lineTo(-39, 2);
+  ctx.moveTo(-10, -2); ctx.lineTo(0, -5);
+  ctx.moveTo(-10, 1); ctx.lineTo(0, 2);
+  ctx.strokeStyle = c.line;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawShoulderGuide(A, B) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,.18)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(A.x, A.y);
+  ctx.lineTo(B.x, B.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderCats(A, B, time) {
+  const dx = B.x - A.x;
+  const dy = B.y - A.y;
+
+  const shoulderLength = Math.hypot(dx, dy);
+  const angle = Math.atan2(dy, dx);
+  const baseScale = Math.max(0.72, Math.min(1.25, shoulderLength / 230));
+  const yOffset = Math.max(28, shoulderLength * 0.12);
+
+  runners.forEach((runner, i) => {
+    if (running) {
+      runner.phase += runner.speed * 0.004 * globalSpeed;
+    }
+
+    let p = runner.phase % 1;
+    if (p < 0) p += 1;
+
+    const x = A.x + dx * p;
+    const y = A.y + dy * p - yOffset
+      + Math.sin(time * 0.007 + runner.bounce) * 2;
+
+    // หันตัวตามทิศวิ่ง
+    drawCuteCat(x, y, baseScale, angle, time, i);
+  });
+}
+
+function animationLoop() {
+  if (!poseLandmarker || video.readyState < 2) {
+    requestAnimationFrame(animationLoop);
+    return;
+  }
+
+  if (canvas.width !== video.videoWidth ||
+      canvas.height !== video.videoHeight) {
+    resizeCanvas();
+  }
+
+  const now = performance.now();
+  const result = poseLandmarker.detectForVideo(video, now);
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  let detected = false;
+
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+
+    const left = lm[11];
+    const right = lm[12];
+
+    if (
+      left && right &&
+      left.visibility > 0.45 &&
+      right.visibility > 0.45
+    ) {
+      detected = true;
+
+      let P1 = {
+        x: mirrorX(left.x * canvas.width),
+        y: left.y * canvas.height
+      };
+
+      let P2 = {
+        x: mirrorX(right.x * canvas.width),
+        y: right.y * canvas.height
+      };
+
+      const A = P1.x < P2.x ? P1 : P2;
+      const B = P1.x < P2.x ? P2 : P1;
+
+      drawShoulderGuide(A, B);
+      renderCats(A, B, now);
+
+      statusBox.textContent =
+        "✅ พบคนแล้ว — แมวการ์ตูน 3 ตัวกำลังวิ่งบนไหล่";
+    }
+  }
+
+  if (!detected) {
+    statusBox.textContent =
+      "🔍 กรุณาหันกล้องให้เห็นใบหน้าและไหล่ทั้งสองข้าง";
+  }
+
+  requestAnimationFrame(animationLoop);
+}
+
+async function init() {
+  try {
+    await setupCamera();
+    statusBox.textContent = "กำลังโหลดระบบตรวจจับคน...";
+    await setupPose();
+
+    statusBox.textContent =
+      "พร้อมใช้งาน — หันกล้องไปที่คน";
+
+    animationLoop();
+  } catch (err) {
+    console.error(err);
+
+    statusBox.textContent =
+      "❌ ไม่สามารถเปิดกล้องได้ กรุณาอนุญาต Camera และเปิดผ่าน HTTPS";
+  }
+}
+
+window.addEventListener("resize", resizeCanvas);
+init();
+</script>
+
+</body>
+</html>
